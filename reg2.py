@@ -1,23 +1,33 @@
-import os
 import glob
+import os
+import warnings
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.svm import SVR
-from sklearn.neighbors import KNeighborsRegressor
-
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.impute import SimpleImputer
 
-import warnings
+# --- IMPORTS ---
+from sklearn.linear_model import (
+    ElasticNet,
+    Lasso,
+    LinearRegression,
+    Ridge,
+)
+from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
+from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import (
+    OneHotEncoder,
+    PolynomialFeatures,
+    StandardScaler,
+)
+from sklearn.svm import SVR
+from sklearn.tree import DecisionTreeRegressor
 
 warnings.filterwarnings("ignore", category=UserWarning, module=r".*impute.*")
 warnings.filterwarnings(
@@ -100,7 +110,12 @@ df_clean = (
     .copy()
 )
 
-num_cols = ["height_ft_clean", "length_ft_clean", "inversions_clean", "year_introduced"]
+num_cols = [
+    "height_ft_clean",
+    "length_ft_clean",
+    "inversions_clean",
+    "year_introduced",
+]
 for c in num_cols:
     if df_clean[c].isna().all():
         df_clean[c] = 0.0
@@ -127,6 +142,7 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=SEED
 )
 
+# Standard preprocessing
 num_pipe = Pipeline(
     [("imp", SimpleImputer(strategy="median")), ("scale", StandardScaler())]
 )
@@ -138,24 +154,84 @@ cat_pipe = Pipeline(
     ]
 )
 
-prep = ColumnTransformer([("num", num_pipe, num_cols), ("cat", cat_pipe, cat_cols)])
+prep = ColumnTransformer(
+    [
+        ("num", num_pipe, num_cols),
+        ("cat", cat_pipe, cat_cols),
+    ]
+)
+
+# Special numerical preprocessing for Polynomial Regression (applies degree scaling)
+num_poly_pipe = Pipeline(
+    [
+        ("imp", SimpleImputer(strategy="median")),
+        (
+            "poly",
+            PolynomialFeatures(degree=2, include_bias=False),
+        ),  # default degree 2
+        ("scale", StandardScaler()),
+    ]
+)
+
+prep_poly = ColumnTransformer(
+    [
+        ("num", num_poly_pipe, num_cols),
+        ("cat", cat_pipe, cat_cols),
+    ]
+)
 
 # --- BASE EVALUATION ---
 models = {
-    "SVR": SVR(C=10.0, kernel="rbf"),
-    "KNN": KNeighborsRegressor(n_neighbors=5, n_jobs=-1),
-    "Random Forest": RandomForestRegressor(
-        n_estimators=100, max_depth=12, random_state=SEED, n_jobs=-1
+    # Standard Linear Models
+    "Linear Regression": (Pipeline([("prep", prep), ("reg", LinearRegression())])),
+    "Ridge Regression": (Pipeline([("prep", prep), ("reg", Ridge(random_state=SEED))])),
+    "Lasso Regression": (Pipeline([("prep", prep), ("reg", Lasso(random_state=SEED))])),
+    "ElasticNet Regression": (
+        Pipeline([("prep", prep), ("reg", ElasticNet(random_state=SEED))])
     ),
-    "Gradient Boosting": GradientBoostingRegressor(
-        n_estimators=100, learning_rate=0.1, max_depth=5, random_state=SEED
+    "Polynomial Regression": Pipeline(
+        [("prep", prep_poly), ("reg", LinearRegression())]
     ),
-    "Decision Tree": DecisionTreeRegressor(max_depth=8, random_state=SEED),
+    # Non-linear Models
+    "SVR": Pipeline([("prep", prep), ("reg", SVR(C=10.0, kernel="rbf"))]),
+    "KNN": Pipeline(
+        [("prep", prep), ("reg", KNeighborsRegressor(n_neighbors=5, n_jobs=-1))]
+    ),
+    "Random Forest": Pipeline(
+        [
+            ("prep", prep),
+            (
+                "reg",
+                RandomForestRegressor(
+                    n_estimators=100, max_depth=12, random_state=SEED, n_jobs=-1
+                ),
+            ),
+        ]
+    ),
+    "Gradient Boosting": Pipeline(
+        [
+            ("prep", prep),
+            (
+                "reg",
+                GradientBoostingRegressor(
+                    n_estimators=100,
+                    learning_rate=0.1,
+                    max_depth=5,
+                    random_state=SEED,
+                ),
+            ),
+        ]
+    ),
+    "Decision Tree": Pipeline(
+        [
+            ("prep", prep),
+            ("reg", DecisionTreeRegressor(max_depth=8, random_state=SEED)),
+        ]
+    ),
 }
 
 res = []
-for name, m in models.items():
-    p = Pipeline([("prep", prep), ("reg", m)])
+for name, p in models.items():
     p.fit(X_train, y_train)
     preds = p.predict(X_test)
 
@@ -177,6 +253,17 @@ print(summary.to_string(index=False))
 top2 = summary["Model"].head(2).tolist()
 
 grids = {
+    "Linear Regression": {},
+    "Ridge Regression": {"reg__alpha": [0.01, 0.1, 1.0, 10.0, 100.0]},
+    "Lasso Regression": {"reg__alpha": [0.001, 0.01, 0.1, 1.0, 10.0]},
+    "ElasticNet Regression": {
+        "reg__alpha": [0.01, 0.1, 1.0, 10.0],
+        "reg__l1_ratio": [0.2, 0.5, 0.7, 0.9],
+    },
+    "Polynomial Regression": {
+        "prep__num__poly__degree": [2, 3],
+        "prep__num__poly__interaction_only": [True, False],
+    },
     "SVR": {
         "reg__C": [0.1, 1.0, 10.0, 100.0],
         "reg__gamma": ["scale", "auto"],
@@ -206,12 +293,19 @@ tuned_fits = {}
 scores = {}
 
 for name in top2:
-    p = Pipeline([("prep", prep), ("reg", models[name])])
-    gs = GridSearchCV(p, grids[name], cv=5, scoring="r2", n_jobs=-1)
-    gs.fit(X_train, y_train)
+    p = models[name]
+    grid = grids[name]
 
-    tuned_fits[name] = gs.best_estimator_
-    scores[name] = r2_score(y_test, gs.best_estimator_.predict(X_test))
+    if grid:
+        gs = GridSearchCV(p, grid, cv=5, scoring="r2", n_jobs=-1)
+        gs.fit(X_train, y_train)
+        best_est = gs.best_estimator_
+    else:
+        p.fit(X_train, y_train)
+        best_est = p
+
+    tuned_fits[name] = best_est
+    scores[name] = r2_score(y_test, best_est.predict(X_test))
 
 best_name = max(scores, key=scores.get)
 best_p = tuned_fits[best_name]
@@ -225,7 +319,9 @@ sns.scatterplot(
 )
 ax[0].axhline(y=0, color="red", linestyle="--")
 ax[0].set(
-    title=f"Residuals ({best_name})", xlabel="Predicted (mph)", ylabel="Residuals (mph)"
+    title=f"Residuals ({best_name})",
+    xlabel="Predicted (mph)",
+    ylabel="Residuals (mph)",
 )
 
 sns.scatterplot(x=y_test, y=best_preds, alpha=0.5, ax=ax[1], color="teal")
@@ -240,6 +336,7 @@ plt.tight_layout()
 plt.savefig("residuals.png", dpi=150, bbox_inches="tight")
 plt.show()
 
+# --- FEATURE IMPORTANCE / COEFFICIENTS ---
 if best_name in ["Random Forest", "Gradient Boosting", "Decision Tree"]:
     ohe_cols = list(
         best_p.named_steps["prep"]
@@ -260,6 +357,33 @@ if best_name in ["Random Forest", "Gradient Boosting", "Decision Tree"]:
     plt.figure(figsize=(9, 5))
     sns.barplot(x="Importance", y="Feature", data=imp, palette="viridis")
     plt.title(f"Feature Importance ({best_name})")
+    plt.tight_layout()
+    plt.savefig("feature_importance.png", dpi=150, bbox_inches="tight")
+    plt.show()
+
+elif best_name in [
+    "Linear Regression",
+    "Ridge Regression",
+    "Lasso Regression",
+    "ElasticNet Regression",
+]:
+    ohe_cols = list(
+        best_p.named_steps["prep"]
+        .named_transformers_["cat"]
+        .named_steps["ohe"]
+        .get_feature_names_out(cat_cols)
+    )
+    all_cols = num_cols + ohe_cols
+
+    coefs = pd.DataFrame(
+        {"Feature": all_cols, "Coefficient": best_p.named_steps["reg"].coef_}
+    )
+    coefs["Abs_Coef"] = coefs["Coefficient"].abs()
+    coefs = coefs.sort_values(by="Abs_Coef", ascending=False).head(10)
+
+    plt.figure(figsize=(9, 5))
+    sns.barplot(x="Coefficient", y="Feature", data=coefs, palette="coolwarm")
+    plt.title(f"Top Model Coefficients ({best_name})")
     plt.tight_layout()
     plt.savefig("feature_importance.png", dpi=150, bbox_inches="tight")
     plt.show()
