@@ -1,0 +1,12 @@
+Copy everything in this folder over your repo (same paths, replace when asked).
+
+Streamlit app (the bonus GUI):
+    pip install -r requirements.txt
+    streamlit run app/app.py          (run from the repo root; opens in the browser)
+It loads models/*.pkl and has three tabs: Regression, Classification, Clustering.
+
+Offline page (backup, no install needed): double-click ui.html and use the "Try it" tab.
+
+Both are produced/fed by the last cell of Review2_Final_ML_Capstone.ipynb (Restart & Run All from the repo root).
+
+Public deployment (+1): push the repo to GitHub and deploy app/app.py on Streamlit Community Cloud (free).
