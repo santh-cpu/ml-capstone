@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MODELS = ROOT / "models"
 
 st.set_page_config(page_title="ML Capstone", layout="centered")
-st.title("ML Capstone")
+st.title("ML Capstone - Team 18")
 st.caption("23CSE301 Machine Learning.")
 
 
